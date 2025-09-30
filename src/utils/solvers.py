@@ -3,6 +3,9 @@ import matplotlib.pyplot as plt
 from types import NoneType
 
 class BasicSolver():
+    """
+    Base class for Sinkhorn-type solvers for OT problems.
+    """
     def __init__(self):
         pass
 
@@ -10,6 +13,11 @@ class BasicSolver():
         pass
 
 class SoftBregman(BasicSolver):
+    """
+    Bregman iteration solver to solve the Relaxed OT problem, where certain transport pairings are impossible (blocked_idxs)
+    and certain source and target indices are not strictly constrained (rows_ and cols_to_relax).
+    """
+
     def __init__(self, gamma, gamma_c, gamma_r, rows_to_relax=None, cols_to_relax=None, blocked_idxs=None):
         """_summary_
 
@@ -94,6 +102,10 @@ class SoftBregman(BasicSolver):
 
         return T
     
-class Dykstra(BasicSolver):
+class BoundedDykstra(BasicSolver):
+    """
+    Solver based on Dykstra's algorithm to solve OT problems where the constraints are non-affine,
+    such as inequality constraints which arise when the source and target are bounded.
+    """
     def __init__(self):
         pass
