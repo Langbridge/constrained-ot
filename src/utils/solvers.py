@@ -33,14 +33,12 @@ class SoftBregman(BasicSolver):
         self.gamma = gamma
 
         if type(rows_to_relax) == NoneType:
-            self.row_exponent_0 = gamma_r / (1+gamma_r)
-            self.row_exponent_1 = -1 / gamma_r
+            self.row_exponent_0, self.row_exponent_1 = 1., 0.
         else:
             self.row_exponent_0, self.row_exponent_1 = self._prep_exponents(gamma_r, rows_to_relax)
 
         if type(cols_to_relax) == NoneType:
-            self.row_exponent_0 = gamma_r / (1+gamma_r)
-            self.row_exponent_1 = -1 / gamma_r
+            self.col_exponent_0, self.col_exponent_1 = 1., 0.
         else:
             self.col_exponent_0, self.col_exponent_1 = self._prep_exponents(gamma_c, cols_to_relax)
 
@@ -52,11 +50,11 @@ class SoftBregman(BasicSolver):
     def _prep_exponents(self, gamma, relax_idx):
         exponent_0 = gamma/(1+gamma) * relax_idx
         exponent_0[relax_idx == 0] = 1.0
-        exponent_1 = relax_idx * (-1/gamma) # 1s are implicit here
+        exponent_1 = relax_idx * (-1/gamma) # 0s are implicit here
 
         return exponent_0, exponent_1
 
-    def solve(self, a, b, mu, nu, num_iters=int(1e3), plot=False):
+    def solve(self, a, b, mu, nu, C=None, num_iters=int(1e3), plot=False):
         """_summary_
 
         Args:
@@ -70,22 +68,25 @@ class SoftBregman(BasicSolver):
         Returns:
             T (np.array): Transport plan.
         """
-        C = np.random.random(size=(len(a), len(b))) ** 2
+        if type(C) == NoneType:
+            C = np.random.random(size=(len(a), len(b))) ** 2
         K = np.pow(np.e, -C / self.gamma)
         for (x,y) in self.blocked_idxs:
             K[x, y] = 0
+
+        mu_0, nu_0 = mu.copy(), nu.copy()
 
         T = K.copy()
         T_old = K.copy()
         convergence_list = np.zeros(shape=(num_iters))
 
         for i in range(num_iters):
-            D1 = np.divide(mu[:,None], np.sum(T, axis=1, keepdims=True), out=np.ones_like(mu[:,None]), where=(np.sum(T, axis=1, keepdims=True) != 0.0))
+            D1 = np.divide(mu_0[:,None], np.sum(T, axis=1, keepdims=True), out=np.ones_like(mu_0[:,None]), where=(np.sum(T, axis=1, keepdims=True) != 0.0))
             D1 = np.pow(D1, self.row_exponent_0)
             T = D1 * T
             mu = (np.pow(D1, self.row_exponent_1) * mu[:,None]).reshape(-1,)
 
-            D2 = np.divide(nu[None,:], np.sum(T, axis=0, keepdims=True), out=np.ones_like(nu[None,:]), where=(np.sum(T, axis=0, keepdims=True) != 0.0))
+            D2 = np.divide(nu_0[None,:], np.sum(T, axis=0, keepdims=True), out=np.ones_like(nu_0[None,:]), where=(np.sum(T, axis=0, keepdims=True) != 0.0))
             D2 = np.pow(D2, self.col_exponent_0)
             T = D2 * T
             nu = (np.pow(D2, self.col_exponent_1) * nu[None,:]).reshape(-1,)
@@ -111,12 +112,12 @@ class BoundedDykstra(BasicSolver):
         """_summary_
 
         Args:
-            gamma (_type_): _description_
-            row_ubs (_type_): _description_
-            row_lbs (_type_): _description_
-            col_ubs (_type_): _description_
-            col_lbs (_type_): _description_
-            blocked_idxs (_type_, optional): _description_. Defaults to None.
+            gamma (_type_): Regularisation parameter for the kernel.
+            row_ubs (_type_): List or np.array of upper bounds for the source elements. To strictly bound elements, set the ub and lb to the original mass.
+            row_lbs (_type_): List or np.array of lower bounds for the source elements. To strictly bound elements, set the ub and lb to the original mass.
+            col_ubs (_type_): List or np.array of upper bounds for the target elements. To strictly bound elements, set the ub and lb to the original mass.
+            col_lbs (_type_): List or np.array of lower bounds for the target elements. To strictly bound elements, set the ub and lb to the original mass.
+            blocked_idxs (_type_, optional): _description_. Tuple of index pairs that are blocked in the transport plan. Defaults to None.
         """
 
         self.gamma = gamma
@@ -157,7 +158,7 @@ class BoundedDykstra(BasicSolver):
         q = np.divide(t, T, out=np.ones_like(T), where=(T != 0.0))
         return T, q, nu
     
-    def solve(self, a, b, mu, nu, num_iters=int(1e3), plot=False):
+    def solve(self, a, b, mu, nu, C=None, num_iters=int(1e3), plot=False):
         """_summary_
 
         Args:
@@ -171,8 +172,8 @@ class BoundedDykstra(BasicSolver):
         Returns:
             T (np.array): Transport plan.
         """
-
-        C = np.random.random(size=(len(a), len(b))) ** 2
+        if type(C) == NoneType:
+            C = np.random.random(size=(len(a), len(b))) ** 2
         K = np.pow(np.e, -C / self.gamma)
         for (x,y) in self.blocked_idxs:
             K[x, y] = 0
