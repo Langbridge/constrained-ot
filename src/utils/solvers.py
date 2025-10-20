@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from types import NoneType
+from tqdm import tqdm
+
+from scipy.special import logsumexp
 
 class BasicSolver():
     """
@@ -70,9 +73,15 @@ class SoftBregman(BasicSolver):
         """
         if type(C) == NoneType:
             C = np.random.random(size=(len(a), len(b))) ** 2
+
+        C /= np.max(C) # numerical stability
+
         K = np.pow(np.e, -C / self.gamma)
         for (x,y) in self.blocked_idxs:
             K[x, y] = 0
+
+        K[K < 1e-300] = 1e-300  # Avoid underflow
+        K[K > 1e300] = 1e300    # Avoid overflow
 
         mu_0, nu_0 = mu.copy(), nu.copy()
 
@@ -95,7 +104,7 @@ class SoftBregman(BasicSolver):
             T_old = T.copy()
 
         if plot:
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(dpi=100)
             ax.plot(convergence_list / convergence_list[0], c='k')
             ax.set_yscale('log')
             ax.set_xlabel('Iteration')
@@ -103,6 +112,75 @@ class SoftBregman(BasicSolver):
 
         return T
     
+class LogStabilised_SoftBregman(SoftBregman):
+    def __init__(self, gamma, gamma_c, gamma_r, rows_to_relax=None, cols_to_relax=None, blocked_idxs=None):
+        super().__init__(gamma, gamma_c, gamma_r, rows_to_relax, cols_to_relax, blocked_idxs)
+
+    def solve(self, a, b, mu, nu, C=None, num_iters=int(1e3), plot=False):
+        """_summary_
+
+        Args:
+            a (np.array): Locations of the source mass.
+            b (np.array): Locations of the target mass.
+            mu (np.array): Source masses.
+            nu (np.array): Target masses.
+            num_iters (int, optional): Number of iterations to solve. Defaults to int(1e3).
+            plot (bool, optional): Plots convergence graph in log space if True. Defaults to False.
+
+        Returns:
+            T (np.array): Transport plan.
+        """
+        if type(C) == NoneType:
+            C = np.random.random(size=(len(a), len(b))) ** 2
+
+        logK = - C / self.gamma
+        # maskK = np.zeros_like(logK)
+        # for (x,y) in self.blocked_idxs:
+        #     maskK[x, y] = 1
+        # logK = np.ma.masked_array(logK, mask=maskK)
+
+        log_mu0 = np.log(mu)
+        log_nu0 = np.log(nu)
+        log_mu = np.zeros_like(log_mu0)
+        log_nu = np.zeros_like(log_nu0)
+
+        logT = logK.copy()
+        logT_old = logK.copy()
+        convergence_list = np.zeros(shape=(num_iters))
+
+        for i in tqdm(range(num_iters)):
+            # row scaling
+            logD1 = self.row_exponent_0 * (log_mu0 - logsumexp(logT, axis=1))[:,None]
+            logT += logD1
+            log_mu += (self.row_exponent_1 * logD1).reshape(-1,)
+
+            # col scaling
+            logD2 = self.col_exponent_0 * (log_nu0 - logsumexp(logT, axis=0))[None,:]
+            logT += logD2
+            log_nu += (self.col_exponent_1 * logD2).reshape(-1,)
+
+            # # stabilise logT
+            # logT -= np.max(logT)
+
+            # convergence testing
+            convergence_list[i] = np.linalg.norm((logT - logT_old).ravel(), ord=1)
+            logT_old = logT.copy()
+
+        if plot:
+            fig, ax = plt.subplots(dpi=100)
+            ax.plot(convergence_list / convergence_list[0], c='k')
+            ax.set_yscale('log')
+            ax.set_xlabel('Iteration')
+            ax.set_ylabel('Log Change in T')
+
+        # logT = logT.filled(0.0)
+        T = np.exp(logT)
+        # T = np.exp(logT - logT.max()) # avoid overflow
+        # T /= T.sum()
+        # T *= np.exp(log_mu).sum()
+
+        return T
+
 class BoundedDykstra(BasicSolver):
     """
     Solver based on Dykstra's algorithm to solve OT problems where the constraints are non-affine,
