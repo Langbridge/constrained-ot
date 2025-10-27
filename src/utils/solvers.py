@@ -57,7 +57,7 @@ class SoftBregman(BasicSolver):
 
         return exponent_0, exponent_1
 
-    def solve(self, a, b, mu, nu, C=None, num_iters=int(1e3), plot=False):
+    def solve(self, a, b, mu, nu, C=None, num_iters=int(1e3), plot=False, thresh=0.0):
         """_summary_
 
         Args:
@@ -67,6 +67,7 @@ class SoftBregman(BasicSolver):
             nu (np.array): Target masses.
             num_iters (int, optional): Number of iterations to solve. Defaults to int(1e3).
             plot (bool, optional): Plots convergence graph in log space if True. Defaults to False.
+            thresh (float, optional): Threshold for early stopping. Defaults to 0.0 (i.e. no early stopping).
 
         Returns:
             T (np.array): Transport plan.
@@ -89,7 +90,7 @@ class SoftBregman(BasicSolver):
         T_old = K.copy()
         convergence_list = np.zeros(shape=(num_iters))
 
-        for i in range(num_iters):
+        for i in tqdm(range(num_iters)):
             D1 = np.divide(mu_0[:,None], np.sum(T, axis=1, keepdims=True), out=np.ones_like(mu_0[:,None]), where=(np.sum(T, axis=1, keepdims=True) != 0.0))
             D1 = np.pow(D1, self.row_exponent_0)
             T = D1 * T
@@ -103,9 +104,13 @@ class SoftBregman(BasicSolver):
             convergence_list[i] = np.linalg.norm((T - T_old).ravel(), ord=1)
             T_old = T.copy()
 
+            if convergence_list[i] < thresh:
+                break
+
+
         if plot:
             fig, ax = plt.subplots(dpi=100)
-            ax.plot(convergence_list / convergence_list[0], c='k')
+            ax.plot(convergence_list[:i] / convergence_list[0], c='k')
             ax.set_yscale('log')
             ax.set_xlabel('Iteration')
             ax.set_ylabel('Change in T')
@@ -133,7 +138,11 @@ class LogStabilised_SoftBregman(SoftBregman):
         if type(C) == NoneType:
             C = np.random.random(size=(len(a), len(b))) ** 2
 
+        C /= np.sum(C)
         logK = - C / self.gamma
+        CLIP_MIN = -1000.0
+        logK = np.maximum(logK, logK.max() + CLIP_MIN)
+
         # maskK = np.zeros_like(logK)
         # for (x,y) in self.blocked_idxs:
         #     maskK[x, y] = 1
@@ -148,6 +157,14 @@ class LogStabilised_SoftBregman(SoftBregman):
         logT_old = logK.copy()
         convergence_list = np.zeros(shape=(num_iters))
 
+        print("C min/mean/max:", float(C.min()), float(C.mean()), float(C.max()))
+        print("gamma (epsilon) value:", float(self.gamma))
+        print("logK min/max/mean/std:", float(logK.min()), float(logK.max()), float(logK.mean()), float(logK.std()))
+        print("Are any mu or nu zero or extremely tiny?")
+        print(" mu min, max, sum:", float(mu.min()), float(mu.max()), float(mu.sum()))
+        print(" nu min, max, sum:", float(nu.min()), float(nu.max()), float(nu.sum()))
+
+
         for i in tqdm(range(num_iters)):
             # row scaling
             logD1 = self.row_exponent_0 * (log_mu0 - logsumexp(logT, axis=1))[:,None]
@@ -159,8 +176,10 @@ class LogStabilised_SoftBregman(SoftBregman):
             logT += logD2
             log_nu += (self.col_exponent_1 * logD2).reshape(-1,)
 
-            # # stabilise logT
-            # logT -= np.max(logT)
+            # stabilise log variables
+            logT -= np.mean(logT)
+            log_mu -= np.mean(log_mu)
+            log_nu -= np.mean(log_nu)
 
             # convergence testing
             convergence_list[i] = np.linalg.norm((logT - logT_old).ravel(), ord=1)
@@ -174,10 +193,11 @@ class LogStabilised_SoftBregman(SoftBregman):
             ax.set_ylabel('Log Change in T')
 
         # logT = logT.filled(0.0)
-        T = np.exp(logT)
-        # T = np.exp(logT - logT.max()) # avoid overflow
-        # T /= T.sum()
-        # T *= np.exp(log_mu).sum()
+        T = np.exp(logT - logsumexp(logT)) # avoid overflow
+        mu = np.exp(log_mu - logsumexp(log_mu))
+        nu = np.exp(log_nu - logsumexp(log_nu))
+
+        diagnose(logK, logT, mu, nu)
 
         return T
 
@@ -288,3 +308,34 @@ class BoundedDykstra(BasicSolver):
 
         return T
         
+
+def diagnose(logK, logT, mu, nu):
+    tiny = 1e-300
+    print("shapes: logK, logT =", logK.shape, logT.shape)
+    print("any nan/inf in logT?", np.isnan(logT).any(), np.isinf(logT).any())
+    print("logT max/min/mean/std:", float(logT.max()), float(logT.min()), float(logT.mean()), float(logT.std()))
+    # normalized log-partition function
+    logZ = logsumexp(logT)
+    print("logZ (global):", float(logZ))
+    # safe normalized T in log-space
+    logT_norm = logT - logZ
+    # check sum in log-space via logsumexp -> should be 0
+    print("logsumexp(logT_norm) (should be 0):", float(logsumexp(logT_norm)))
+    # compute T sum (exact)
+    T_sum = float(np.exp(logsumexp(logT)))
+    print("exp(logZ) i.e. sum(exp(logT)):", T_sum)
+    # compute marginals from logT without full exp (safe)
+    approx_row = np.exp(logsumexp(logT, axis=1))
+    approx_col = np.exp(logsumexp(logT, axis=0))
+    print("||row_sum - mu||:", np.linalg.norm(approx_row - mu))
+    print("||col_sum - nu||:", np.linalg.norm(approx_col - nu))
+    # entropy computed in log-space (safe)
+    # H = - sum_i p_i log p_i = - sum_i exp(logT_norm_i) * logT_norm_i
+    T_flat = np.exp(logT_norm)   # may be large array but safe because normalized by logZ
+    H = -np.sum(T_flat * logT_norm)
+    print("entropy (safe computed):", float(H))
+    print("entropy upper bound (uniform) log(n*m):", np.log(logT.size))
+    # check mu/nu logs
+    print("mu min/max, any zeros?:", float(np.min(mu)), float(np.max(mu)))
+    print("nu min/max, any zeros?:", float(np.min(nu)), float(np.max(nu)))
+
