@@ -78,10 +78,9 @@ class SoftBregman(BasicSolver):
         C /= np.max(C) # numerical stability
 
         K = np.pow(np.e, -C / self.gamma)
-        for (x,y) in self.blocked_idxs:
-            K[x, y] = 0
+        K[*self.blocked_idxs.T] = 0.0
 
-        K[K < 1e-300] = 1e-300  # Avoid underflow
+        # K[K < 1e-300] = 1e-300  # Avoid underflow
         K[K > 1e300] = 1e300    # Avoid overflow
 
         mu_0, nu_0 = mu.copy(), nu.copy()
@@ -106,7 +105,6 @@ class SoftBregman(BasicSolver):
 
             if convergence_list[i] < thresh:
                 break
-
 
         if plot:
             fig, ax = plt.subplots(dpi=100)
