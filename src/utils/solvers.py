@@ -46,7 +46,7 @@ class SoftBregman(BasicSolver):
             self.col_exponent_0, self.col_exponent_1 = self._prep_exponents(gamma_c, cols_to_relax)
 
         if type(blocked_idxs) == NoneType:
-            self.blocked_idxs = ()
+            self.blocked_idxs = None
         else:
             self.blocked_idxs = blocked_idxs
 
@@ -74,11 +74,11 @@ class SoftBregman(BasicSolver):
         """
         if type(C) == NoneType:
             C = np.random.random(size=(len(a), len(b))) ** 2
-
         C /= np.max(C) # numerical stability
 
         K = np.pow(np.e, -C / self.gamma)
-        K[*self.blocked_idxs.T] = 0.0
+        if type(self.blocked_idxs) != NoneType:
+            K[*self.blocked_idxs.T] = 0.0
 
         # K[K < 1e-300] = 1e-300  # Avoid underflow
         K[K > 1e300] = 1e300    # Avoid overflow
